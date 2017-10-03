@@ -6,6 +6,7 @@ thread groups, which I could use to sync threads from different blocks.*/
 #include <curand_kernel.h>
 #include <stdio.h>
 #include <time.h>
+#include <math.h>
 
 #define POS_MAX 100
 #define INIT_W 0.9
@@ -199,6 +200,7 @@ __global__ void update_particle(float* positions_ptr, float* velocities_ptr,
 				positions_ptr[blockIdx.x * dim + index];
 		}
 
+		//TODO - PRECISO DISSO MESMO?
 		__syncthreads();
 
 		//Update new personal best fitness if necessary
@@ -215,110 +217,119 @@ __global__ void update_particle(float* positions_ptr, float* velocities_ptr,
 }
 
 int main(){
-	int D_values_length = 7;
-	int N_values_length = 10;
-	int D_values[] = {1600, 3200, 6400};
-	int N_values[] = {10, 20, 40, 80, 160, 320, 640, 1280, 2560, 5120};
-	printf("dim/pop\t");
-	for(int i = 0; i < N_values_length; i++){
-		printf("%d\t", N_values[i]);
-	}
-	printf("\n");
+	int D_values_length = 4;
+	int N_values_length = 4;
+	int repetitions = 30;
+	int D_values[] = {800, 1600, 3200, 6400};
+	int N_values[] = {640, 1280, 2560, 5120};
+	//int D_values[] = {100, 200, 400, 800, 1600, 3200, 6400};
+	//int N_values[] = {10, 20, 40, 80, 160, 320, 640, 1280, 2560, 5120};
+	//int D_values[] = {1, 2, 4, 8, 16, 32, 64};
+	//int N_values[] = {10, 20, 40, 80, 160, 320, 640, 1280, 2560, 5120};
+	printf("dim\tpop\ttime\tbest_fitness\tscore\n");
+
 	for(int d_value = 0; d_value < D_values_length; d_value++){
 		int D = D_values[d_value];
-		printf("%d\t", D);
-		for(int n_value = 0; n_value < N_values_length; n_value++){			
+		for(int n_value = 0; n_value < N_values_length; n_value++){
+			float avg_fitness_result = 0;
+			double avg_time_result = 0;		
+			double avg_general_score = 0;
 			int N = N_values[n_value];
-			clock_t begin = clock();
-			struct timespec rawtime;
+			for(int k = 0; k < repetitions; k++){
+				clock_t begin = clock();
+				struct timespec rawtime;
 
-			float positions[N * D];
-			float fitnesses[N];
-			float gbest[D];
-			float gbest_fitness;
+				float positions[N * D];
+				float fitnesses[N];
+				float gbest[D];
+				float gbest_fitness;
 
-			float *positions_ptr;
-			cudaMalloc((void**) &positions_ptr, N * D * sizeof(float));
+				float *positions_ptr;
+				cudaMalloc((void**) &positions_ptr, N * D * sizeof(float));
 
-			float *velocities_ptr;
-			cudaMalloc((void**) &velocities_ptr, N * D * sizeof(float));
+				float *velocities_ptr;
+				cudaMalloc((void**) &velocities_ptr, N * D * sizeof(float));
 
-			float *fitnesses_ptr;
-			cudaMalloc((void**) &fitnesses_ptr, N * sizeof(float));
+				float *fitnesses_ptr;
+				cudaMalloc((void**) &fitnesses_ptr, N * sizeof(float));
 
-			float *personal_bests_ptr;
-			cudaMalloc((void**) &personal_bests_ptr, N * D * sizeof(float));
+				float *personal_bests_ptr;
+				cudaMalloc((void**) &personal_bests_ptr, N * D * sizeof(float));
 
-			float *personal_best_fitness_ptr;
-			cudaMalloc((void**) &personal_best_fitness_ptr, N * sizeof(float));
-			
-			float *gbest_dev_ptr;
-			cudaMalloc((void**) &gbest_dev_ptr, D * sizeof(float));
-
-			float *gbest_fitness_dev_ptr;
-			cudaMalloc((void**) &gbest_fitness_dev_ptr, sizeof(float));	
-
-			clock_gettime(CLOCK_MONOTONIC_RAW, &rawtime);
-			unsigned int time_nsec = rawtime.tv_nsec;
-
-			int allocated_threads_get_gbest = N < MAX_THREAD_PER_BLOCK ? N : MAX_THREAD_PER_BLOCK;
-			int allocated_threads_dimensions = D < MAX_THREAD_PER_BLOCK ? D : MAX_THREAD_PER_BLOCK;
-			init_population<<<N, allocated_threads_dimensions>>>(positions_ptr, velocities_ptr,
-				fitnesses_ptr, personal_bests_ptr, personal_best_fitness_ptr, time_nsec, gbest_dev_ptr,
-				gbest_fitness_dev_ptr, D, N);
-
-			get_global_best<<<1, allocated_threads_get_gbest, N * sizeof(int)>>>(positions_ptr, fitnesses_ptr,
-				gbest_dev_ptr, gbest_fitness_dev_ptr, D, N);
-
-			float inertia_weight = INIT_W;
-			float c1 = INIT_C1;
-			float c2 = INIT_C2;
-			for(int i = 0; i < MAX_ITERATIONS; i++){
-				clock_gettime(CLOCK_MONOTONIC_RAW, &rawtime);
-				time_nsec = rawtime.tv_nsec;
-				update_particle<<<N, allocated_threads_dimensions>>>(positions_ptr, velocities_ptr,
-					fitnesses_ptr, personal_bests_ptr, personal_best_fitness_ptr, time_nsec, gbest_dev_ptr,
-					inertia_weight, c1, c2, D);
-				get_global_best<<<1, allocated_threads_get_gbest, N * sizeof(int)>>>(positions_ptr, fitnesses_ptr,
-					gbest_dev_ptr, gbest_fitness_dev_ptr, D, N);
-				inertia_weight += (FINAL_W - INIT_W) / MAX_ITERATIONS;
-				c1 += (FINAL_C1 - INIT_C1) / MAX_ITERATIONS;
-				c2 += (FINAL_C2 - INIT_C2) / MAX_ITERATIONS;
-			}
-
-			cudaMemcpy(&positions, positions_ptr, N * D * sizeof(float),
-					   cudaMemcpyDeviceToHost);
-			cudaMemcpy(&fitnesses, fitnesses_ptr, N * sizeof(float),
-				   	   cudaMemcpyDeviceToHost);
-			cudaMemcpy(&gbest_fitness, gbest_fitness_dev_ptr, sizeof(float),
-					   cudaMemcpyDeviceToHost);
-			cudaMemcpy(&gbest, gbest_dev_ptr, D * sizeof(float),
-				   	   cudaMemcpyDeviceToHost);
-
-			/*for(int i = 0; i < N; i++){		
-				for(int j = 0; j < D; j++){
-					printf("%f ", positions[i * D + j]);
-				}
-				printf("= %f\n", fitnesses[i]);
-			}
-			printf("\n");*/
-
-			/*for(int i = 0; i < D; i++){
-				printf("%f ", gbest[i]);
-			}
-			printf("= %f\n", gbest_fitness);*/
+				float *personal_best_fitness_ptr;
+				cudaMalloc((void**) &personal_best_fitness_ptr, N * sizeof(float));
 				
-			cudaFree(positions_ptr);
-			cudaFree(velocities_ptr);
-			cudaFree(fitnesses_ptr);
-			cudaFree(personal_bests_ptr);
-			cudaFree(personal_best_fitness_ptr);
-			cudaFree(gbest_dev_ptr);
-			cudaFree(gbest_fitness_dev_ptr);
-			clock_t end = clock();
-			double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-			printf("%lf\n", time_spent);
+				float *gbest_dev_ptr;
+				cudaMalloc((void**) &gbest_dev_ptr, D * sizeof(float));
+
+				float *gbest_fitness_dev_ptr;
+				cudaMalloc((void**) &gbest_fitness_dev_ptr, sizeof(float));	
+
+				clock_gettime(CLOCK_MONOTONIC_RAW, &rawtime);
+				unsigned int time_nsec = rawtime.tv_nsec;
+
+				int allocated_threads_get_gbest = N < MAX_THREAD_PER_BLOCK ? N : MAX_THREAD_PER_BLOCK;
+				int allocated_threads_dimensions = D < MAX_THREAD_PER_BLOCK ? D : MAX_THREAD_PER_BLOCK;
+				init_population<<<N, allocated_threads_dimensions>>>(positions_ptr, velocities_ptr,
+					fitnesses_ptr, personal_bests_ptr, personal_best_fitness_ptr, time_nsec,
+					gbest_dev_ptr,gbest_fitness_dev_ptr, D, N);
+				get_global_best<<<1, allocated_threads_get_gbest, N * sizeof(int)>>>(positions_ptr, fitnesses_ptr, gbest_dev_ptr, gbest_fitness_dev_ptr, D, N);
+
+				float inertia_weight = INIT_W;
+				float c1 = INIT_C1;
+				float c2 = INIT_C2;
+				for(int i = 0; i < MAX_ITERATIONS; i++){
+					clock_gettime(CLOCK_MONOTONIC_RAW, &rawtime);
+					time_nsec = rawtime.tv_nsec;
+					update_particle<<<N, allocated_threads_dimensions>>>(positions_ptr, velocities_ptr,
+						fitnesses_ptr, personal_bests_ptr, personal_best_fitness_ptr, time_nsec, gbest_dev_ptr,
+						inertia_weight, c1, c2, D);
+					get_global_best<<<1, allocated_threads_get_gbest, N * sizeof(int)>>>(positions_ptr, fitnesses_ptr,
+						gbest_dev_ptr, gbest_fitness_dev_ptr, D, N);
+					inertia_weight += (FINAL_W - INIT_W) / MAX_ITERATIONS;
+					c1 += (FINAL_C1 - INIT_C1) / MAX_ITERATIONS;
+					c2 += (FINAL_C2 - INIT_C2) / MAX_ITERATIONS;
+				}
+
+				cudaMemcpy(&positions, positions_ptr, N * D * sizeof(float),
+						   cudaMemcpyDeviceToHost);
+				cudaMemcpy(&fitnesses, fitnesses_ptr, N * sizeof(float),
+					   	   cudaMemcpyDeviceToHost);
+				cudaMemcpy(&gbest_fitness, gbest_fitness_dev_ptr, sizeof(float),
+						   cudaMemcpyDeviceToHost);
+				cudaMemcpy(&gbest, gbest_dev_ptr, D * sizeof(float),
+					   	   cudaMemcpyDeviceToHost);
+
+				/*for(int i = 0; i < N; i++){		
+					for(int j = 0; j < D; j++){
+						printf("%f ", positions[i * D + j]);
+					}
+					printf("= %f\n", fitnesses[i]);
+				}
+				printf("\n");*/
+
+				/*for(int i = 0; i < D; i++){
+					printf("%f ", gbest[i]);
+				}
+				printf("= %f\n", gbest_fitness);*/
+					
+				cudaFree(positions_ptr);
+				cudaFree(velocities_ptr);
+				cudaFree(fitnesses_ptr);
+				cudaFree(personal_bests_ptr);
+				cudaFree(personal_best_fitness_ptr);
+				cudaFree(gbest_dev_ptr);
+				cudaFree(gbest_fitness_dev_ptr);
+				clock_t end = clock();
+				double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+				avg_fitness_result += -gbest_fitness;
+				avg_time_result += time_spent;
+				avg_general_score += sqrt(pow(gbest_fitness, 2) + pow(time_spent, 2));
+
+			}
+			printf("%d\t%d\t%lf\t%f\t%lf\n", D, N, avg_time_result / repetitions,
+					avg_fitness_result / repetitions, avg_general_score);
 		}
 		printf("\n");
-	}
+	}	
 }
