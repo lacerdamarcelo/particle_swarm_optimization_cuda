@@ -158,7 +158,7 @@ __global__ void update_particle(float* positions_ptr, float* velocities_ptr,
 	while(index < dim){
 		float r1 = (float)(curand(&state) % 100001) / 100000;
 		float r2 = (float)(curand(&state) % 100001) / 100000;
-		/*printf("-1 - %f %f %f %f %f %f %f %f %f\n",
+		/*printf("-0 - %f %f %f %f %f %f %f %f %f\n",
 			personal_bests_ptr[active_indexes[blockIdx.x] * dim + index],
 			gbest[index], positions_ptr[active_indexes[blockIdx.x] * dim + index],
 			velocities_ptr[active_indexes[blockIdx.x] * dim + index], c1, c2, r1,
@@ -179,7 +179,7 @@ __global__ void update_particle(float* positions_ptr, float* velocities_ptr,
 			velocities_ptr[active_indexes[blockIdx.x] * dim + index] = -VEL_CLAMPING_FACTOR *
 															POS_MAX;
 		}
-		/*printf("0 - %f %f %f %f %f %f %f %f %f\n",
+		/*printf("-1 - %f %f %f %f %f %f %f %f %f\n",
 			personal_bests_ptr[active_indexes[blockIdx.x] * dim + index],
 			gbest[index], positions_ptr[active_indexes[blockIdx.x] * dim + index],
 			velocities_ptr[active_indexes[blockIdx.x] * dim + index], c1, c2, r1,
@@ -193,6 +193,12 @@ __global__ void update_particle(float* positions_ptr, float* velocities_ptr,
 			positions_ptr[active_indexes[blockIdx.x] * dim + index] = -POS_MAX;
 			velocities_ptr[active_indexes[blockIdx.x] * dim + index] *= -1;
 		}
+
+		/*printf("-2 - %f %f %f %f %f %f %f %f %f\n",
+			personal_bests_ptr[active_indexes[blockIdx.x] * dim + index],
+			gbest[index], positions_ptr[active_indexes[blockIdx.x] * dim + index],
+			velocities_ptr[active_indexes[blockIdx.x] * dim + index], c1, c2, r1,
+			r2, inertia_weight);*/
 
 		__syncthreads();
 		//Calculate new fitness
@@ -225,13 +231,10 @@ __global__ void update_particle(float* positions_ptr, float* velocities_ptr,
 	}
 }
 
-__global__ void calculate_new_fitnesses(int* number_new_individuals_ptr, int* max_N_ptr, int* D_ptr,
-								 		float* positions, float* fitnesses,
-								 		float* personal_best_fitness, int* active_indexes){
-	int number_new_individuals = *number_new_individuals_ptr;
-	int max_N = *max_N_ptr;
+__global__ void calculate_new_fitnesses(int* D_ptr, float* positions, float* fitnesses,
+								 		float* personal_best_fitness, int* active_indexes,
+								 		int index){
 	int D = *D_ptr;
-	int index = active_indexes[blockIdx.x + max_N - number_new_individuals];
 	float fitness = sphere_function(positions, index, D);
 	fitnesses[index] = fitness;
 	personal_best_fitness[index] = fitness;
@@ -277,10 +280,6 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 	cudaMalloc((void**) &inertia_weight_dev, sizeof(float));
 	cudaMemcpy(inertia_weight_dev, inertia_weight, sizeof(float), cudaMemcpyHostToDevice);
 
-	int* max_N_dev;
-	cudaMalloc((void**) &max_N_dev, sizeof(int));
-	cudaMemcpy(max_N_dev, &max_N, sizeof(int), cudaMemcpyHostToDevice);
-
 	unsigned int* time_nsec_dev;
 	cudaMalloc((void**) &time_nsec_dev, sizeof(unsigned int));
 	cudaMemcpy(time_nsec_dev, &time_nsec, sizeof(unsigned int), cudaMemcpyHostToDevice);
@@ -291,7 +290,7 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 
 	int allocated_threads_get_gbest = N < MAX_THREAD_PER_BLOCK ? N : MAX_THREAD_PER_BLOCK;
 	int allocated_threads_dimensions = D < MAX_THREAD_PER_BLOCK ? D : MAX_THREAD_PER_BLOCK;
-	if(run_init_population == 1){		
+	if(run_init_population == 1){
 		cudaMalloc((void**) positions_dev, max_N * D * sizeof(float));
 		cudaMalloc((void**) fitnesses_dev, max_N * sizeof(float));
 		cudaMalloc((void**) velocities_dev, max_N * D * sizeof(float));
@@ -304,19 +303,21 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 			*gbest_dev, *gbest_fitnesses_dev, D_dev, active_indexes_dev);
 		get_global_best<<<1, allocated_threads_get_gbest, N * sizeof(int)>>>(*positions_dev,
 			*fitnesses_dev, *gbest_dev, *gbest_fitnesses_dev, D_dev, N_dev, active_indexes_dev);
-		cudaMemcpy(positions, *positions_dev, max_N * D * sizeof(float),
-				   cudaMemcpyDeviceToHost);
-		cudaMemcpy(fitnesses, *fitnesses_dev, max_N * sizeof(float),
-			   	   cudaMemcpyDeviceToHost);
 	}else{
-		for(int i = N - 1, j = 0; i >= N - number_new_individuals; i--, j++){
-			int index_new_element = active_indexes[i];
-			cudaMemcpy(positions_dev + (index_new_element * D), new_positions + (j * D),
-				D * sizeof(float), cudaMemcpyHostToDevice);
-			cudaMemcpy(personal_bests_dev + (index_new_element * D), new_positions + (j * D),
-				D * sizeof(float), cudaMemcpyHostToDevice);
-			calculate_new_fitnesses<<<number_new_individuals, 1>>>(number_new_individuals_dev, max_N_dev, D_dev,
-				*positions_dev, *fitnesses_dev, *personal_best_fitnesses_dev, active_indexes_dev);
+		for(int j = 0; j < number_new_individuals; j++){
+			int index_new_element = active_indexes[j];
+			printf("&&&&&&&&&&&&&&&&&&&\n");
+			for(int i = 0; i < 2; i++){
+				printf("%f ", *(new_positions + (j * D) + i));
+			}
+			printf("\n");
+			cudaMemcpy((*positions_dev) + (index_new_element * D),
+				new_positions + (j * D), D * sizeof(float), cudaMemcpyHostToDevice);
+			cudaMemcpy((*personal_bests_dev) + (index_new_element * D),
+				new_positions + (j * D), D * sizeof(float), cudaMemcpyHostToDevice);
+			calculate_new_fitnesses<<<number_new_individuals, 1>>>(D_dev,
+				*positions_dev, *fitnesses_dev, *personal_best_fitnesses_dev,
+				active_indexes_dev, index_new_element);
 			get_global_best<<<1, allocated_threads_get_gbest, N * sizeof(int)>>>(*positions_dev,
 				*fitnesses_dev, *gbest_dev, *gbest_fitnesses_dev, D_dev, N_dev, active_indexes_dev);
 		}
@@ -326,13 +327,23 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 				   cudaMemcpyDeviceToHost);
 	cudaMemcpy(fitnesses, *fitnesses_dev, max_N * sizeof(float),
 		   	   cudaMemcpyDeviceToHost);
-	for(int i = 0; i < N; i++){		
+	for(int i = 0; i < N; i++){	
 		for(int j = 0; j < D; j++){
-			printf("%f ", positions[i * D + j]);
+			printf("%f ", positions[active_indexes[i] * D + j]);
 		}
-		printf("= %f\n", fitnesses[i]);
+		printf("= %f\n", fitnesses[active_indexes[i]]);
 	}
 	printf("\n");
+	cudaMemcpy(gbest, *gbest_dev, D * sizeof(float),
+		   	   cudaMemcpyDeviceToHost);
+	cudaMemcpy(gbest_fitness, *gbest_fitnesses_dev, sizeof(float),
+		   	   cudaMemcpyDeviceToHost);
+	printf("GBEST\n");
+	for(int i = 0; i < D; i++){
+		printf("%f ", *(gbest+i));
+	}
+	printf("%f\n", *gbest_fitness);
+	printf("=================================\n");
 	for(int i = 0; i < n_iterations; i++){
 		clock_gettime(CLOCK_MONOTONIC_RAW, &rawtime);
 		time_nsec = rawtime.tv_nsec;
@@ -340,10 +351,6 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 		update_particle<<<N, allocated_threads_dimensions>>>(*positions_dev, *velocities_dev,
 			*fitnesses_dev, *personal_bests_dev, *personal_best_fitnesses_dev, time_nsec_dev, *gbest_dev,
 			inertia_weight_dev, c1_dev, c2_dev, D_dev, active_indexes_dev);
-		cudaMemcpy(positions, *positions_dev, max_N * D * sizeof(float),
-				   cudaMemcpyDeviceToHost);
-		cudaMemcpy(fitnesses, *fitnesses_dev, max_N * sizeof(float),
-			   	   cudaMemcpyDeviceToHost);
 		get_global_best<<<1, allocated_threads_get_gbest, N * sizeof(int)>>>(*positions_dev, *fitnesses_dev,
 			*gbest_dev, *gbest_fitnesses_dev, D_dev, N_dev, active_indexes_dev);
 		
@@ -358,13 +365,23 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 				   cudaMemcpyDeviceToHost);
 		cudaMemcpy(fitnesses, *fitnesses_dev, max_N * sizeof(float),
 			   	   cudaMemcpyDeviceToHost);
-		for(int i = 0; i < N; i++){		
+		for(int k = 0; k < N; k++){		
 			for(int j = 0; j < D; j++){
-				printf("%f ", positions[i * D + j]);
+				printf("%f ", positions[active_indexes[k] * D + j]);
 			}
-			printf("= %f\n", fitnesses[i]);
+			printf("= %f\n", fitnesses[active_indexes[k]]);
 		}
 		printf("\n");
+		cudaMemcpy(gbest, *gbest_dev, D * sizeof(float),
+		   	   cudaMemcpyDeviceToHost);
+		cudaMemcpy(gbest_fitness, *gbest_fitnesses_dev, sizeof(float),
+			   	   cudaMemcpyDeviceToHost);
+		printf("GBEST\n");
+		for(int k = 0; k < D; k++){
+			printf("%f ", *(gbest+k));
+		}
+		printf("%f\n", *gbest_fitness);
+		printf("=================================\n");
 	}
 
 	cudaMemcpy(positions, *positions_dev, max_N * D * sizeof(float),
@@ -408,7 +425,6 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 	cudaFree(c1_dev);
 	cudaFree(c2_dev);
 	cudaFree(inertia_weight_dev);
-	cudaFree(max_N_dev);
 	cudaFree(time_nsec_dev);
 	cudaFree(number_new_individuals_dev);
 	return sqrt(pow(*gbest_fitness, 2) + pow(time_spent, 2));

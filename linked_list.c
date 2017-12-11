@@ -10,8 +10,8 @@ void insert(struct linked_list_element **first_e, struct linked_list_element *e,
 	}else{
 		current_e = *first_e;
 		if(index == 0){
-			*first_e = e;
 			(*e).next_linked_list_element = current_e;
+			*first_e = e;
 		}else{
 			int i;
 			for(i = 0; i < index - 1; i++){
@@ -26,19 +26,19 @@ void insert(struct linked_list_element **first_e, struct linked_list_element *e,
 //LIBERAR MEMORIA
 struct linked_list_element* remove_e(struct linked_list_element **first_e, int index){
 	struct linked_list_element *current_e = *first_e;
-	struct linked_list_element *e_removed;
+	struct linked_list_element *e_removed = NULL;
 	if(index == 0){
 		e_removed = *first_e;
-		*first_e = (*current_e).next_linked_list_element;
-		(*current_e).next_linked_list_element = NULL;
+		*first_e = (*e_removed).next_linked_list_element;
+		(*e_removed).next_linked_list_element = NULL;
 	}else{
 		int i;
 		for(i = 0; i < index - 1; i++){
 			current_e = (*current_e).next_linked_list_element;
-			e_removed = current_e;
 		}
+		e_removed = (*current_e).next_linked_list_element;
 		(*current_e).next_linked_list_element = (*((*current_e).next_linked_list_element)).next_linked_list_element;
-		(*current_e).next_linked_list_element = NULL;
+		(*e_removed).next_linked_list_element = NULL;
 	}
 	return e_removed;
 }
