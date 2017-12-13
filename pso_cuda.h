@@ -10,5 +10,7 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 		  float** fitnesses_dev, float** velocities_dev, float** personal_bests_dev,
 		  float** personal_best_fitnesses_dev, float** gbest_dev,
 		  float** gbest_fitnesses_dev, int get_gbest, int free_cuda_memory,
-		  int run_init_population);
+		  int run_init_population, float** previous_gbest_fitness,
+		  FILE* arquivo_threads, FILE* arquivo_gbest, float delta_fitness_weight,
+		  float time_spent_weight);
 #endif
