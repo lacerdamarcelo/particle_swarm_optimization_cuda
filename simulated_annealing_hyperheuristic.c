@@ -93,8 +93,7 @@ float* modify_population(int number_new_individuals, float* population,
                 current_element = (*current_element).next_linked_list_element;
             }
             for(j = 0; j < dim; j++){
-                r = gauss(0, 1);
-                perturbation = r * v;
+                perturbation = gauss(0, v);
                 *(new_positions + (i * dim) + j) =
                     *(population + (chosen_index * dim) + j) + perturbation;
             }
@@ -189,13 +188,15 @@ float gerar_e_analisar_vizinho(float* solucao, float qualidade_solucao_corrente,
                                struct stack_element** free_indexes, float q,
                                float v, float** previous_gbest_fitness,
                                FILE* arquivo_threads, FILE* qualidade_solucoes,
-                               FILE* arquivo_gbest, int free_cuda_memory, float delta_fitness_weight,
+                               FILE* arquivo_gbest, FILE* arquivo_avg_fitness,
+                               FILE* arquivo_time_spent, int free_cuda_memory,
+                               float delta_fitness_weight,
                                float time_spent_weight){
     float nova_solucao[num_dimensoes];
     int i, r;
     for(i = 0; i < num_dimensoes; i++){
         r = rand();
-        nova_solucao[i] = solucao[i] + (gauss(0, 1) * temperatura);
+        nova_solucao[i] = solucao[i] + gauss(0, temperatura * 1000);
         //I'm considering here only one dimension (number of individuals)
         if(nova_solucao[i] < 2){
             nova_solucao[i] = 2;
@@ -203,7 +204,7 @@ float gerar_e_analisar_vizinho(float* solucao, float qualidade_solucao_corrente,
             nova_solucao[i] = MAX_INDIVIDUALS;
         }
     }
-    printf("POP: %d\n", (int)roundf(nova_solucao[0]));
+    //printf("POP: %d\n", (int)roundf(nova_solucao[0]));
     int number_new_individuals = (int)roundf(nova_solucao[0]) - (int)roundf(solucao[0]); 
     float* new_positions = modify_population(number_new_individuals, positions,
                                              fitnesses, (int)solucao[0],
@@ -220,11 +221,11 @@ float gerar_e_analisar_vizinho(float* solucao, float qualidade_solucao_corrente,
         fitness_dev, velocities_dev, personal_bests_dev,
         personal_best_fitness_dev, gbest_dev,
         gbest_fitness_dev, 0, free_cuda_memory, 0, previous_gbest_fitness,
-        arquivo_threads, arquivo_gbest, delta_fitness_weight, time_spent_weight);
-    printf("Qualidade: %f\n", qualidade_solucao_nova);
+        arquivo_threads, arquivo_gbest, arquivo_avg_fitness, arquivo_time_spent,
+        delta_fitness_weight, time_spent_weight);
+    //printf("Qualidade: %f\n", qualidade_solucao_nova);
     fprintf(qualidade_solucoes, "%f\n", qualidade_solucao_nova);
     free(new_positions);
-
     if(qualidade_solucao_nova <= qualidade_solucao_corrente){
         copiar_vetor(nova_solucao, solucao, num_dimensoes);
         return qualidade_solucao_nova;
@@ -254,7 +255,7 @@ void inicializar_solucao(float* solucao, float min_value, float max_value,
 
 /*Executando o procedimento de busca durante um numero maximo de iteracoes para um dada temperatura fixa.*/
 float executar_temperatura_fixa(float* solucao, float qualidade_solucao_corrente,
-                               int num_dimensoes, int temperatura,
+                               int num_dimensoes, float temperatura,
                                int maximo_iteracoes, int D,
                                float* positions, float* fitnesses,
                                float* gbest, float* gbest_fitness, float* inertia_weight,
@@ -267,7 +268,8 @@ float executar_temperatura_fixa(float* solucao, float qualidade_solucao_corrente
                                struct stack_element** free_indexes, float q,
                                float v, float** previous_gbest_fitness,
                                FILE* arquivo_threads, FILE* qualidade_solucoes,
-                               FILE* arquivo_gbest, int free_cuda_memory,
+                               FILE* arquivo_gbest, FILE* arquivo_avg_fitness,
+                               FILE* arquivo_time_spent, int free_cuda_memory,
                                float delta_fitness_weight, float time_spent_weight){
     int i;
     for(i = 0; i < maximo_iteracoes; i++){
@@ -280,8 +282,9 @@ float executar_temperatura_fixa(float* solucao, float qualidade_solucao_corrente
             positions_dev, fitness_dev, velocities_dev, personal_bests_dev,
             personal_best_fitness_dev, gbest_dev, gbest_fitness_dev,
             active_indexes, free_indexes, q, v, previous_gbest_fitness,
-            arquivo_threads, qualidade_solucoes, arquivo_gbest, free_cuda_memory,
-            delta_fitness_weight, time_spent_weight);
+            arquivo_threads, qualidade_solucoes, arquivo_gbest, arquivo_avg_fitness,
+            arquivo_time_spent, free_cuda_memory, delta_fitness_weight,
+            time_spent_weight);
     }
     return qualidade_solucao_corrente;
 }
@@ -302,22 +305,62 @@ float calcular_nova_temperatura(float temperatura, float alfa){
     return temperatura * alfa;
 }
 
-int main(){
+int main(int argc, char *argv[]){
 
-    float temperatura = 1000;
+    float temperatura = atof(argv[1]);
+    int maximo_iteracoes = atoi(argv[2]);
+    float alfa = atof(argv[3]);
+    float temperatura_minima = atof(argv[4]);
+    int D = atoi(argv[5]);
+    int iteracoes_metaheuristica = atoi(argv[6]);
+    float q = atof(argv[7]);
+    float v = atof(argv[8]);
+    float delta_fitness_weight = atof(argv[9]);
+    float time_spent_weight = atof(argv[10]);
+    int rep = atoi(argv[11]);
+
+    /*float temperatura = 1000;
     int maximo_iteracoes = 10;
     float alfa = 0.6;
-    int temperatura_minima = 1;
-    int D = 1000;
+    float temperatura_minima = 1;
+    int D = 100;
     int iteracoes_metaheuristica = 100;
-    int q = 1;
-    int v = 5;
+    float q = 1;
+    float v = 5;
     float delta_fitness_weight = 1;
     float time_spent_weight = 1;
+    int rep = 0;*/
 
-    FILE* arquivo_threads = fopen("threads.txt", "w");
-    FILE* qualidade_solucoes = fopen("qualidades.txt", "w");
-    FILE* arquivo_gbest = fopen("gbest.txt", "w");
+    char threads_file_name[300];
+    sprintf(threads_file_name, "resultados/threads_temp%fmaxiter%dalfa%ftemin%fD%ditmet%dq%fv%fdelfiw%ftispwe%f_%d.txt",
+            temperatura, maximo_iteracoes, alfa, temperatura_minima, D, iteracoes_metaheuristica,
+            q, v, delta_fitness_weight, time_spent_weight, rep);
+    printf("%s\n", threads_file_name);
+    char qualidades_file_name[300];
+    sprintf(qualidades_file_name, "resultados/qualidades_temp%fmaxiter%dalfa%ftemin%fD%ditmet%dq%fv%fdelfiw%ftispwe%f_%d.txt",
+            temperatura, maximo_iteracoes, alfa, temperatura_minima, D, iteracoes_metaheuristica,
+            q, v, delta_fitness_weight, time_spent_weight, rep);
+    printf("%s\n", qualidades_file_name);
+    char gbest_file_name[300];
+    sprintf(gbest_file_name, "resultados/gbest_temp%fmaxiter%dalfa%ftemin%fD%ditmet%dq%fv%fdelfiw%ftispwe%f_%d.txt",
+            temperatura, maximo_iteracoes, alfa, temperatura_minima, D, iteracoes_metaheuristica,
+            q, v, delta_fitness_weight, time_spent_weight, rep);
+    printf("%s\n", gbest_file_name);
+    char avg_fitness_file_name[300];
+    sprintf(avg_fitness_file_name, "resultados/avg_fitness_temp%fmaxiter%dalfa%ftemin%fD%ditmet%dq%fv%fdelfiw%ftispwe%f_%d.txt",
+            temperatura, maximo_iteracoes, alfa, temperatura_minima, D, iteracoes_metaheuristica,
+            q, v, delta_fitness_weight, time_spent_weight, rep);
+    printf("%s\n", avg_fitness_file_name);
+    char time_spent_file_name[300];
+    sprintf(time_spent_file_name, "resultados/time_stemp_temp%fmaxiter%dalfa%ftemin%fD%ditmet%dq%fv%fdelfiw%ftispwe%f_%d.txt",
+            temperatura, maximo_iteracoes, alfa, temperatura_minima, D, iteracoes_metaheuristica,
+            q, v, delta_fitness_weight, time_spent_weight, rep);
+    printf("%s\n", time_spent_file_name);
+    FILE* arquivo_threads = fopen(threads_file_name, "w");
+    FILE* qualidade_solucoes = fopen(qualidades_file_name, "w");
+    FILE* arquivo_gbest = fopen(gbest_file_name, "w");
+    FILE* arquivo_avg_fitness = fopen(avg_fitness_file_name, "w");
+    FILE* arquivo_time_spent = fopen(time_spent_file_name, "w");
 
     srand(time(NULL));
     int num_dimensoes = 1;
@@ -329,10 +372,10 @@ int main(){
     float melhor_solucao[num_dimensoes];
     float qualidade_melhor_solucao;
 
-    inicializar_solucao(solucao, 0, temperatura, num_dimensoes);
+    inicializar_solucao(solucao, 0, temperatura * 1000, num_dimensoes);
 
     int initial_pop_size = roundf(solucao[0]);
-    printf("%d\n", initial_pop_size);
+    //printf("%d\n", initial_pop_size);
     //Vetores que vao guardar os valores computados apos cada execucao com uma nova populacao.
     float* positions = (float*) malloc(MAX_INDIVIDUALS * D * sizeof(float));
     float* fitnesses = (float*) malloc(MAX_INDIVIDUALS * sizeof(float));
@@ -388,7 +431,7 @@ int main(){
     float c1_update_value = (float)(FINAL_C1 - INIT_C1) / max_iterations;
     float c2_update_value = (float)(FINAL_C2 - INIT_C2) / max_iterations;
     float w_update_value = (float)(FINAL_W - INIT_W) / max_iterations;
-    printf("%d %f %f %f\n", max_iterations, c1_update_value, c2_update_value, w_update_value);
+    //printf("%d %f %f %f\n", max_iterations, c1_update_value, c2_update_value, w_update_value);
 
     int* active_indexes_vec = convert_linked_list_vector(active_indexes, initial_pop_size);
     qualidade_solucao_corrente = run((int)roundf(solucao[0]),
@@ -401,15 +444,16 @@ int main(){
                                      &fitness_dev, &velocities_dev, &personal_bests_dev,
                                      &personal_best_fitness_dev, &gbest_dev,
                                      &gbest_fitness_dev, 0, 0, 1, previous_gbest_fitness,
-                                     arquivo_threads, arquivo_gbest, delta_fitness_weight,
-                                     time_spent_weight);
+                                     arquivo_threads, arquivo_gbest, arquivo_avg_fitness,
+                                     arquivo_time_spent,
+                                     delta_fitness_weight, time_spent_weight);
     copiar_vetor(solucao, melhor_solucao, num_dimensoes);
     qualidade_melhor_solucao = qualidade_solucao_corrente;
-    printf("Solucao inicial:\n");
+    /*printf("Solucao inicial:\n");
     for(i = 0; i < num_dimensoes; i++){
         printf("%f ", melhor_solucao[i]);
     }
-    printf("\n");
+    printf("\n");*/
     float proxima_temperatura;
     while(temperatura > temperatura_minima){
         proxima_temperatura = calcular_nova_temperatura(temperatura, alfa);
@@ -425,7 +469,8 @@ int main(){
                 &personal_best_fitness_dev, &gbest_dev,
                 &gbest_fitness_dev, &active_indexes, &free_indexes, q, v,
                 previous_gbest_fitness, arquivo_threads, qualidade_solucoes,
-                arquivo_gbest, 0, delta_fitness_weight, time_spent_weight);
+                arquivo_gbest, arquivo_avg_fitness, arquivo_time_spent,
+                0, delta_fitness_weight, time_spent_weight);
         }else{
             qualidade_solucao_corrente = executar_temperatura_fixa(solucao,
                 qualidade_solucao_corrente,
@@ -438,23 +483,24 @@ int main(){
                 &personal_best_fitness_dev, &gbest_dev,
                 &gbest_fitness_dev, &active_indexes, &free_indexes, 1, 5,
                 previous_gbest_fitness, arquivo_threads, qualidade_solucoes,
-                arquivo_gbest, 1, delta_fitness_weight, time_spent_weight);
+                arquivo_gbest, arquivo_avg_fitness, arquivo_time_spent,
+                1, delta_fitness_weight, time_spent_weight);
         }
         temperatura = calcular_nova_temperatura(temperatura, alfa);
         qualidade_melhor_solucao = atualizar_melhor_solucao(solucao, qualidade_solucao_corrente,
                                                         melhor_solucao, qualidade_melhor_solucao,
                                                         num_dimensoes);
-        for(i = 0; i < num_dimensoes; i++){
+        /*for(i = 0; i < num_dimensoes; i++){
             printf("%f ", melhor_solucao[i]);
         }
         printf(" = %f\n", qualidade_melhor_solucao);
-        printf("%f %f %f\n", *c1, *c2, *inertia_weight);
+        printf("%f %f %f\n", *c1, *c2, *inertia_weight);*/
     }
-    printf("Solucao final:\n");
+    /*printf("Solucao final:\n");
     for(i = 0; i < num_dimensoes; i++){
         printf("%f ", melhor_solucao[i]);
     }
-    printf("\n");
+    printf("\n");*/
     free(positions);
     free(fitnesses);
     free(gbest);
@@ -466,5 +512,7 @@ int main(){
     fclose(arquivo_threads);
     fclose(qualidade_solucoes);
     fclose(arquivo_gbest);
+    fclose(arquivo_avg_fitness);
+    fclose(arquivo_time_spent);
   return 0;
 }

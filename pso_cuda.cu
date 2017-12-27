@@ -193,42 +193,45 @@ __global__ void update_particle(float* positions_ptr, float* velocities_ptr,
 			positions_ptr[active_indexes[blockIdx.x] * dim + index] = -POS_MAX;
 			velocities_ptr[active_indexes[blockIdx.x] * dim + index] *= -1;
 		}
+		index += blockDim.x;
+	}
 
-		/*printf("-2 - %f %f %f %f %f %f %f %f %f\n",
-			personal_bests_ptr[active_indexes[blockIdx.x] * dim + index],
-			gbest[index], positions_ptr[active_indexes[blockIdx.x] * dim + index],
-			velocities_ptr[active_indexes[blockIdx.x] * dim + index], c1, c2, r1,
-			r2, inertia_weight);*/
+	/*printf("-2 - %f %f %f %f %f %f %f %f %f\n",
+		personal_bests_ptr[active_indexes[blockIdx.x] * dim + index],
+		gbest[index], positions_ptr[active_indexes[blockIdx.x] * dim + index],
+		velocities_ptr[active_indexes[blockIdx.x] * dim + index], c1, c2, r1,
+		r2, inertia_weight);*/
+	index = threadIdx.x;
+	__syncthreads();
+	//Calculate new fitness
+	if(index == 0){		
+		fitnesses_ptr[active_indexes[blockIdx.x]] =
+			sphere_function(positions_ptr, active_indexes[blockIdx.x], dim);
+	}
+	__syncthreads();
 
-		__syncthreads();
-		//Calculate new fitness
-		if(index == 0){		
-			fitnesses_ptr[active_indexes[blockIdx.x]] =
-				sphere_function(positions_ptr, active_indexes[blockIdx.x], dim);
-		}
-		__syncthreads();
-
+	while(index < dim){
 		//Update personal best if necessary
 		if(fitnesses_ptr[active_indexes[blockIdx.x]] >
 			personal_best_fitness_ptr[active_indexes[blockIdx.x]]){
 			personal_bests_ptr[active_indexes[blockIdx.x] * dim + index] =
 				positions_ptr[active_indexes[blockIdx.x] * dim + index];
 		}
-
-		//TODO - DO I REALLY NEED THIS?
-		__syncthreads();
-
-		//Update new personal best fitness if necessary
-		if(index == 0){
-			if(fitnesses_ptr[active_indexes[blockIdx.x]] >
-				personal_best_fitness_ptr[active_indexes[blockIdx.x]]){
-					personal_best_fitness_ptr[active_indexes[blockIdx.x]] =
-						fitnesses_ptr[active_indexes[blockIdx.x]];
-			}
-		}
-		
 		index += blockDim.x;
 	}
+
+	index = threadIdx.x;
+	//TODO - DO I REALLY NEED THIS?
+	__syncthreads();
+
+	//Update new personal best fitness if necessary
+	if(index == 0){
+		if(fitnesses_ptr[active_indexes[blockIdx.x]] >
+			personal_best_fitness_ptr[active_indexes[blockIdx.x]]){
+				personal_best_fitness_ptr[active_indexes[blockIdx.x]] =
+					fitnesses_ptr[active_indexes[blockIdx.x]];
+		}
+	}	
 }
 
 __global__ void calculate_new_fitnesses(int* D_ptr, float* positions, float* fitnesses,
@@ -258,8 +261,8 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 		  float** personal_best_fitnesses_dev, float** gbest_dev,
 		  float** gbest_fitnesses_dev, int get_gbest, int free_cuda_memory,
 		  int run_init_population, float** previous_gbest_fitness,
-		  FILE* arquivo_threads, FILE* arquivo_gbest, float delta_fitness_weight,
-		  float time_spent_weight){
+		  FILE* arquivo_threads, FILE* arquivo_gbest, FILE* arquivo_avg_fitness,
+		  FILE* arquivo_time_spent, float delta_fitness_weight, float time_spent_weight){
 	clock_t begin = clock();
 	struct timespec rawtime;
 
@@ -392,9 +395,9 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 		   	   cudaMemcpyDeviceToHost);
 	/*for(int i = 0; i < N; i++){		
 		for(int j = 0; j < D; j++){
-			printf("%f ", positions[i * D + j]);
+			printf("%f ", positions[active_indexes[i] * D + j]);
 		}
-		printf("= %f\n", fitnesses[i]);
+		printf("= %f\n", fitnesses[active_indexes[i]]);
 	}*/
 	if(get_gbest == 1){
 		cudaMemcpy(gbest, *gbest_dev, D * sizeof(float),
@@ -416,18 +419,27 @@ float run(int N, int max_N, int D, float* positions, float* fitnesses,
 	cudaFree(inertia_weight_dev);
 	cudaFree(time_nsec_dev);
 	cudaFree(number_new_individuals_dev);
+
+	float fitness_average = 0.0;
+	for(int i = 0; i < N; i++){
+		fitness_average = fitnesses[active_indexes[i]];
+	}
+	fitness_average /= N;
+
 	float delta_gbest_fitness;
 	if(*previous_gbest_fitness == NULL){
 		*previous_gbest_fitness = (float*) malloc(sizeof(float));
-		*(*previous_gbest_fitness) = *gbest_fitness;
-		delta_gbest_fitness = *gbest_fitness;
+		*(*previous_gbest_fitness) = fitness_average;
+		delta_gbest_fitness = fitness_average;
 	}else{
-		delta_gbest_fitness = *(*previous_gbest_fitness) - *gbest_fitness;
-		*(*previous_gbest_fitness) = *gbest_fitness;
+		delta_gbest_fitness = *(*previous_gbest_fitness) - fitness_average;
+		*(*previous_gbest_fitness) = fitness_average;
 	}
 
 	fprintf(arquivo_threads, "%d\n", N);
 	fprintf(arquivo_gbest, "%f\n", *gbest_fitness);
+	fprintf(arquivo_avg_fitness, "%f\n", fitness_average);
+	fprintf(arquivo_time_spent, "%f\n", time_spent);
 
 	if(free_cuda_memory == 1){
 		cudaFree(positions_dev);
